@@ -14,6 +14,8 @@ int main()
 {
     debug_init_usblog();
 
+    controller_init();
+
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, ANTIALIAS_RESAMPLE_FETCH_ALWAYS);
     rdpq_init();
 
@@ -43,7 +45,10 @@ int main()
 
     model64_t *model = model64_load_buf(buf, size);
 
-    GLfloat angle = 0;
+    float atToEyeAngle = 0, atToEyeDist = 5;
+    float atToEyeY = 0, atToEye[3];
+    float eyeX, eyeY, eyeZ,
+        atX = 0, atY = 0, atZ = 0;
 
     // profiling
     int n_frames_store_starts = 50;
@@ -57,7 +62,12 @@ int main()
     GLuint the_dlist;
     bool the_dlist_is_built = false;
 
+    bool enable_aa = true;
+    bool show_hud = true;
+
     rdpq_debug_start();
+
+    uint32_t ticks_last = TICKS_READ();
 
     while (true)
     {
@@ -71,7 +81,8 @@ int main()
         glClearColor(0.3, 0.2, 0.7, 1);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glEnable(GL_MULTISAMPLE_ARB);
+        if (enable_aa)
+            glEnable(GL_MULTISAMPLE_ARB);
 
         glEnable(GL_DEPTH_TEST);
 
@@ -81,14 +92,16 @@ int main()
 
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
+        atToEye[0] = atToEyeDist * cos(atToEyeAngle);
+        atToEye[2] = atToEyeDist * sin(atToEyeAngle);
+        atToEye[1] = atToEyeY;
+        eyeX = atToEye[0] + atX;
+        eyeY = atToEye[1] + atY;
+        eyeZ = atToEye[2] + atZ;
         gluLookAt(
-            -5, 3, 1,
-            0, 2, 0,
+            eyeX, eyeY, eyeZ,
+            atX, atY, atZ,
             0, 1, 0);
-
-        // make the object rotate
-        glRotatef(angle, 0, 1, 0);
-        angle += 360.0f / 100;
 
         if (!use_the_dlist || !the_dlist_is_built)
         {
@@ -136,9 +149,66 @@ int main()
             char str[1000];
             snprintf(str, sizeof(str), "ms/frame=%f frame/s=%f",
                      average_processing_ms_per_frame, 1000 / average_processing_ms_per_frame);
-            graphics_draw_text(disp, 10, 5, str);
+            if (show_hud)
+                graphics_draw_text(disp, 10, 5, str);
+        }
+
+        if (show_hud)
+        {
+            char str[1000];
+            snprintf(str, sizeof(str), "AA:%s DList:%s (press A/B)",
+                     enable_aa ? "ON" : "OFF", use_the_dlist ? "Yes" : "No");
+            graphics_draw_text(disp, 10, 15, str);
+            graphics_draw_text(disp, 10, 25, "Controls: stick=left/right/down/up");
+            graphics_draw_text(disp, 10, 35, "dpad-up/down=nearer/further");
+            graphics_draw_text(disp, 10, 45, "C-up/down=target up/down");
+            graphics_draw_text(disp, 10, 55, "Z=toggle 'hud'");
         }
 
         display_show(disp);
+
+        controller_scan();
+        struct controller_data down = get_keys_down();
+        struct controller_data pressed = get_keys_pressed();
+
+        if (down.c[0].A)
+        {
+            enable_aa = !enable_aa;
+        }
+
+        if (down.c[0].B)
+        {
+            use_the_dlist = !use_the_dlist;
+        }
+
+        if (down.c[0].Z)
+        {
+            show_hud = !show_hud;
+        }
+
+        uint32_t ticks_now = TICKS_READ();
+        float deltat = TICKS_DISTANCE(ticks_last, ticks_now) / (float)TICKS_PER_SECOND;
+        ticks_last = ticks_now;
+
+        // debugf("%08lx-%08lx deltat=%f %d\n", ticks_last, ticks_now, deltat, pressed.c[0].x);
+
+        float eyeAngleSpeed = 10.0f, eyedistSpeed = 5.0f, eyeYspeed = 4.0f, atYspeed = 5.0f;
+
+        float stickthreshold = 20;
+        if (fabsf(pressed.c[0].x) > stickthreshold)
+            atToEyeAngle += (pressed.c[0].x - stickthreshold) / (127 - stickthreshold) * eyeAngleSpeed * deltat;
+
+        if (fabsf(pressed.c[0].y) > stickthreshold)
+            atToEyeY += (pressed.c[0].y - stickthreshold) / (127 - stickthreshold) * eyedistSpeed * deltat;
+
+        if (pressed.c[0].down || pressed.c[0].up)
+            atToEyeDist += (pressed.c[0].down ? -1 : 1) * eyeYspeed * deltat;
+
+        if (pressed.c[0].C_down || pressed.c[0].C_up)
+            atY += (pressed.c[0].C_down ? -1 : 1) * atYspeed * deltat;
+
+        float atToEyeDist_min = 0.1;
+        if (atToEyeDist < atToEyeDist_min)
+            atToEyeDist = atToEyeDist_min;
     }
 }
