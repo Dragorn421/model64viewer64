@@ -1,0 +1,6 @@
+.vscode/
+n64_rom/build/
+*.z64
+watchreupandlog_logs.txt
+watchreupandlog_out.txt
+wasm_model64/build/
